@@ -6,16 +6,12 @@ import { createSupabaseBrowserClient } from '../../lib/supabaseBrowserClient';
 import Toast from '../../components/Toast';
 import type { User } from '@supabase/supabase-js';
 
-type CaptionVote = {
-  caption_id: string;
-  vote: number; // 1 for upvote, -1 for downvote
-};
-
 type Caption = {
   id: string;
-  caption_text: string;
-  created_at: string;
-  author_name?: string;
+  content: string;
+  created_datetime_utc: string;
+  author_name: string;
+  profile_id: string;
   upvotes: number;
   downvotes: number;
   net_score: number;
@@ -24,8 +20,8 @@ type Caption = {
 type ImageRow = {
   id: string;
   url: string | null;
-  alt_text?: string | null;
-  created_at?: string;
+  image_description?: string | null;
+  created_datetime_utc?: string;
   captions: Caption[];
 };
 
@@ -34,11 +30,12 @@ type SortMode = 'top' | 'new' | 'controversial';
 export default function ProtectedImages() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
   const [rows, setRows] = useState<ImageRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
-  const [userVotes, setUserVotes] = useState<Record<string, number>>({});
+  const [userVotes, setUserVotes] = useState<Record<string, { voteValue: number; voteRowId: number }>>({});
   const [votingCaptionId, setVotingCaptionId] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('top');
   const [toast, setToast] = useState({ message: '', visible: false });
@@ -70,11 +67,15 @@ export default function ProtectedImages() {
 
       setUser(session.user);
 
+      // Get profile_id from profiles table (profiles.id matches auth.users.id)
+      const currentProfileId = session.user.id;
+      setProfileId(currentProfileId);
+
       // Fetch images
       const { data: images, error: imgError } = await supabase
         .from('images')
-        .select('id, url, alt_text, created_at')
-        .order('created_at', { ascending: false })
+        .select('id, url, image_description, created_datetime_utc')
+        .order('created_datetime_utc', { ascending: false })
         .limit(20);
 
       if (imgError) {
@@ -89,12 +90,16 @@ export default function ProtectedImages() {
         return;
       }
 
-      // Fetch captions for all images
+      // Fetch captions for all images, joining with profiles for author name
       const imageIds = images.map((img: any) => img.id);
       const { data: captions, error: capError } = await supabase
         .from('captions')
-        .select('id, image_id, caption_text, created_at, author_name')
+        .select('id, image_id, content, created_datetime_utc, profile_id, profiles(first_name, last_name)')
         .in('image_id', imageIds);
+
+      if (capError) {
+        console.error('Captions fetch error:', capError);
+      }
 
       // Fetch vote counts for all captions
       let captionVoteCounts: Record<string, { upvotes: number; downvotes: number }> = {};
@@ -102,7 +107,7 @@ export default function ProtectedImages() {
         const captionIds = captions.map((c: any) => c.id);
         const { data: votes } = await supabase
           .from('caption_votes')
-          .select('caption_id, vote')
+          .select('caption_id, vote_value')
           .in('caption_id', captionIds);
 
         if (votes) {
@@ -110,22 +115,22 @@ export default function ProtectedImages() {
             if (!captionVoteCounts[v.caption_id]) {
               captionVoteCounts[v.caption_id] = { upvotes: 0, downvotes: 0 };
             }
-            if (v.vote > 0) captionVoteCounts[v.caption_id].upvotes++;
-            else if (v.vote < 0) captionVoteCounts[v.caption_id].downvotes++;
+            if (v.vote_value > 0) captionVoteCounts[v.caption_id].upvotes++;
+            else if (v.vote_value < 0) captionVoteCounts[v.caption_id].downvotes++;
           }
         }
 
         // Fetch current user's votes
         const { data: myVotes } = await supabase
           .from('caption_votes')
-          .select('caption_id, vote')
-          .eq('user_id', session.user.id)
+          .select('id, caption_id, vote_value')
+          .eq('profile_id', currentProfileId)
           .in('caption_id', captionIds);
 
         if (myVotes) {
-          const voteMap: Record<string, number> = {};
+          const voteMap: Record<string, { voteValue: number; voteRowId: number }> = {};
           for (const v of myVotes) {
-            voteMap[v.caption_id] = v.vote;
+            voteMap[v.caption_id] = { voteValue: v.vote_value, voteRowId: v.id };
           }
           setUserVotes(voteMap);
         }
@@ -135,15 +140,23 @@ export default function ProtectedImages() {
       const enrichedImages = images.map((img: any) => {
         const imgCaptions = (captions || [])
           .filter((c: any) => c.image_id === img.id)
-          .map((c: any) => ({
-            id: c.id,
-            caption_text: c.caption_text,
-            created_at: c.created_at,
-            author_name: c.author_name || 'Anonymous',
-            upvotes: captionVoteCounts[c.id]?.upvotes || 0,
-            downvotes: captionVoteCounts[c.id]?.downvotes || 0,
-            net_score: (captionVoteCounts[c.id]?.upvotes || 0) - (captionVoteCounts[c.id]?.downvotes || 0),
-          }));
+          .map((c: any) => {
+            const profile = c.profiles as any;
+            const firstName = profile?.first_name || '';
+            const lastName = profile?.last_name || '';
+            const authorName = (firstName + ' ' + lastName).trim() || 'Anonymous';
+
+            return {
+              id: c.id,
+              content: c.content || '',
+              created_datetime_utc: c.created_datetime_utc,
+              author_name: authorName,
+              profile_id: c.profile_id,
+              upvotes: captionVoteCounts[c.id]?.upvotes || 0,
+              downvotes: captionVoteCounts[c.id]?.downvotes || 0,
+              net_score: (captionVoteCounts[c.id]?.upvotes || 0) - (captionVoteCounts[c.id]?.downvotes || 0),
+            };
+          });
 
         return {
           ...img,
@@ -159,23 +172,22 @@ export default function ProtectedImages() {
   }, [router]);
 
   const handleVote = useCallback(async (captionId: string, voteValue: number) => {
-    if (!user) {
+    if (!user || !profileId) {
       router.push('/login');
       return;
     }
 
     setVotingCaptionId(captionId);
     const supabase = createSupabaseBrowserClient();
-    const currentVote = userVotes[captionId];
+    const existingVote = userVotes[captionId];
 
     try {
-      if (currentVote === voteValue) {
-        // Remove vote (toggle off)
+      if (existingVote && existingVote.voteValue === voteValue) {
+        // Remove vote (toggle off) - delete by row id
         const { error } = await supabase
           .from('caption_votes')
           .delete()
-          .eq('caption_id', captionId)
-          .eq('user_id', user.id);
+          .eq('id', existingVote.voteRowId);
 
         if (error) throw error;
 
@@ -202,26 +214,23 @@ export default function ProtectedImages() {
         );
 
         showToast('Vote removed');
-      } else {
-        // Upsert vote
+      } else if (existingVote) {
+        // Change vote direction - update existing row
         const { error } = await supabase
           .from('caption_votes')
-          .upsert(
-            {
-              caption_id: captionId,
-              user_id: user.id,
-              vote: voteValue,
-            },
-            { onConflict: 'caption_id,user_id' }
-          );
+          .update({
+            vote_value: voteValue,
+            modified_datetime_utc: new Date().toISOString(),
+          })
+          .eq('id', existingVote.voteRowId);
 
         if (error) throw error;
 
-        const previousVote = currentVote || 0;
+        const previousVote = existingVote.voteValue;
 
         setUserVotes((prev) => ({
           ...prev,
-          [captionId]: voteValue,
+          [captionId]: { ...prev[captionId], voteValue },
         }));
 
         // Update local counts
@@ -232,17 +241,52 @@ export default function ProtectedImages() {
               if (c.id !== captionId) return c;
               let upDelta = 0;
               let downDelta = 0;
-
               if (previousVote > 0) upDelta--;
               if (previousVote < 0) downDelta--;
               if (voteValue > 0) upDelta++;
               if (voteValue < 0) downDelta++;
-
               return {
                 ...c,
                 upvotes: c.upvotes + upDelta,
                 downvotes: c.downvotes + downDelta,
                 net_score: c.net_score + voteValue - previousVote,
+              };
+            }),
+          })) ?? null
+        );
+
+        showToast(voteValue > 0 ? '👍 Upvoted!' : '👎 Downvoted');
+      } else {
+        // Insert new vote
+        const { data: inserted, error } = await supabase
+          .from('caption_votes')
+          .insert({
+            caption_id: captionId,
+            profile_id: profileId,
+            vote_value: voteValue,
+            created_datetime_utc: new Date().toISOString(),
+          })
+          .select('id')
+          .single();
+
+        if (error) throw error;
+
+        setUserVotes((prev) => ({
+          ...prev,
+          [captionId]: { voteValue, voteRowId: inserted.id },
+        }));
+
+        // Update local counts
+        setRows((prev) =>
+          prev?.map((img) => ({
+            ...img,
+            captions: img.captions.map((c) => {
+              if (c.id !== captionId) return c;
+              return {
+                ...c,
+                upvotes: c.upvotes + (voteValue > 0 ? 1 : 0),
+                downvotes: c.downvotes + (voteValue < 0 ? 1 : 0),
+                net_score: c.net_score + voteValue,
               };
             }),
           })) ?? null
@@ -256,7 +300,7 @@ export default function ProtectedImages() {
     } finally {
       setVotingCaptionId(null);
     }
-  }, [user, userVotes, router]);
+  }, [user, profileId, userVotes, router]);
 
   const sortCaptions = (captions: Caption[]): Caption[] => {
     const sorted = [...captions];
@@ -264,9 +308,8 @@ export default function ProtectedImages() {
       case 'top':
         return sorted.sort((a, b) => b.net_score - a.net_score);
       case 'new':
-        return sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        return sorted.sort((a, b) => new Date(b.created_datetime_utc).getTime() - new Date(a.created_datetime_utc).getTime());
       case 'controversial':
-        // Most total votes with closest to 0 net score
         return sorted.sort((a, b) => {
           const aTotal = a.upvotes + a.downvotes;
           const bTotal = b.upvotes + b.downvotes;
@@ -288,6 +331,7 @@ export default function ProtectedImages() {
   const formatTimeAgo = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
     if (mins < 60) return `${mins}m ago`;
     const hours = Math.floor(mins / 60);
     if (hours < 24) return `${hours}h ago`;
@@ -388,7 +432,7 @@ export default function ProtectedImages() {
             {/* Image */}
             {row.url && (
               <div className="card-image-wrapper">
-                <img src={row.url} alt={row.alt_text || 'Humor image'} />
+                <img src={row.url} alt={row.image_description || 'Humor image'} />
                 {row.captions.length > 0 && (
                   <div style={{
                     position: 'absolute',
@@ -433,11 +477,11 @@ export default function ProtectedImages() {
                         </div>
 
                         <div className="caption-content">
-                          <p className="caption-text">{caption.caption_text}</p>
+                          <p className="caption-text">{caption.content}</p>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                             <span className="caption-author">{caption.author_name}</span>
                             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                              {formatTimeAgo(caption.created_at)}
+                              {formatTimeAgo(caption.created_datetime_utc)}
                             </span>
                           </div>
                         </div>
@@ -445,7 +489,7 @@ export default function ProtectedImages() {
                         {/* Vote buttons */}
                         <div className="caption-votes">
                           <button
-                            className={`vote-btn upvote ${userVotes[caption.id] === 1 ? 'active' : ''}`}
+                            className={`vote-btn upvote ${userVotes[caption.id]?.voteValue === 1 ? 'active' : ''}`}
                             onClick={() => handleVote(caption.id, 1)}
                             disabled={votingCaptionId === caption.id}
                             title="Upvote"
@@ -459,7 +503,7 @@ export default function ProtectedImages() {
                           </div>
 
                           <button
-                            className={`vote-btn downvote ${userVotes[caption.id] === -1 ? 'active' : ''}`}
+                            className={`vote-btn downvote ${userVotes[caption.id]?.voteValue === -1 ? 'active' : ''}`}
                             onClick={() => handleVote(caption.id, -1)}
                             disabled={votingCaptionId === caption.id}
                             title="Downvote"
@@ -490,7 +534,7 @@ export default function ProtectedImages() {
         ))}
       </div>
 
-      {/* Fun stats footer */}
+      {/* Stats footer */}
       <div style={{
         textAlign: 'center',
         marginTop: '4rem',
