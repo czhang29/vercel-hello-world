@@ -2,9 +2,5 @@
 import ProtectedImages from './ProtectedImages';
 
 export default function ImagesPage() {
-  return (
-    <main style={{ padding: '2rem' }}>
-      <ProtectedImages />
-    </main>
-  );
+  return <ProtectedImages />;
 }
