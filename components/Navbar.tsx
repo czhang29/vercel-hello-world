@@ -18,11 +18,9 @@ export default function Navbar() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
     });
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
@@ -44,18 +42,12 @@ export default function Navbar() {
   };
 
   const getInitial = () => {
-    if (user?.user_metadata?.full_name) {
-      return user.user_metadata.full_name.charAt(0).toUpperCase();
-    }
-    if (user?.email) {
-      return user.email.charAt(0).toUpperCase();
-    }
+    if (user?.user_metadata?.full_name) return user.user_metadata.full_name.charAt(0).toUpperCase();
+    if (user?.email) return user.email.charAt(0).toUpperCase();
     return '?';
   };
 
-  const getAvatarUrl = () => {
-    return user?.user_metadata?.avatar_url || null;
-  };
+  const getAvatarUrl = () => user?.user_metadata?.avatar_url || null;
 
   return (
     <nav className="navbar">
@@ -66,12 +58,15 @@ export default function Navbar() {
         </Link>
 
         <div className="navbar-links">
-          <Link
-            href="/images"
-            className={`nav-link ${pathname === '/images' ? 'active' : ''}`}
-          >
+          <Link href="/images" className={`nav-link ${pathname === '/images' ? 'active' : ''}`}>
             🖼️ Gallery
           </Link>
+
+          {user && (
+            <Link href="/upload" className={`nav-link ${pathname === '/upload' ? 'active' : ''}`}>
+              📸 Upload
+            </Link>
+          )}
 
           {user ? (
             <div className="dropdown" ref={dropdownRef}>
