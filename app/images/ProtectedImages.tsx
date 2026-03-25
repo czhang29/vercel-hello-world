@@ -48,7 +48,6 @@ export default function ProtectedImages() {
     const supabase = createSupabaseBrowserClient();
 
     async function load() {
-      // Check session
       const {
         data: { session },
         error: sessionError,
@@ -67,11 +66,9 @@ export default function ProtectedImages() {
 
       setUser(session.user);
 
-      // Get profile_id from profiles table (profiles.id matches auth.users.id)
       const currentProfileId = session.user.id;
       setProfileId(currentProfileId);
 
-      // Fetch images
       const { data: images, error: imgError } = await supabase
         .from('images')
         .select('id, url, image_description, created_datetime_utc')
@@ -90,7 +87,6 @@ export default function ProtectedImages() {
         return;
       }
 
-      // Fetch captions for all images, joining with profiles for author name
       const imageIds = images.map((img: any) => img.id);
       const { data: captions, error: capError } = await supabase
         .from('captions')
@@ -101,7 +97,6 @@ export default function ProtectedImages() {
         console.error('Captions fetch error:', capError);
       }
 
-      // Fetch vote counts for all captions
       let captionVoteCounts: Record<string, { upvotes: number; downvotes: number }> = {};
       if (captions && captions.length > 0) {
         const captionIds = captions.map((c: any) => c.id);
@@ -120,7 +115,6 @@ export default function ProtectedImages() {
           }
         }
 
-        // Fetch current user's votes
         const { data: myVotes } = await supabase
           .from('caption_votes')
           .select('id, caption_id, vote_value')
@@ -136,7 +130,6 @@ export default function ProtectedImages() {
         }
       }
 
-      // Combine data
       const enrichedImages = images.map((img: any) => {
         const imgCaptions = (captions || [])
           .filter((c: any) => c.image_id === img.id)
@@ -183,7 +176,7 @@ export default function ProtectedImages() {
 
     try {
       if (existingVote && existingVote.voteValue === voteValue) {
-        // Remove vote (toggle off) - delete by row id
+        // Remove vote (toggle off) — DELETE needs no audit fields
         const { error } = await supabase
           .from('caption_votes')
           .delete()
@@ -197,7 +190,6 @@ export default function ProtectedImages() {
           return next;
         });
 
-        // Update local counts
         setRows((prev) =>
           prev?.map((img) => ({
             ...img,
@@ -215,12 +207,12 @@ export default function ProtectedImages() {
 
         showToast('Vote removed');
       } else if (existingVote) {
-        // Change vote direction - update existing row
+        // Change vote direction — include modified_by_user_id
         const { error } = await supabase
           .from('caption_votes')
           .update({
             vote_value: voteValue,
-            modified_datetime_utc: new Date().toISOString(),
+            modified_by_user_id: profileId,
           })
           .eq('id', existingVote.voteRowId);
 
@@ -233,7 +225,6 @@ export default function ProtectedImages() {
           [captionId]: { ...prev[captionId], voteValue },
         }));
 
-        // Update local counts
         setRows((prev) =>
           prev?.map((img) => ({
             ...img,
@@ -257,14 +248,15 @@ export default function ProtectedImages() {
 
         showToast(voteValue > 0 ? '👍 Upvoted!' : '👎 Downvoted');
       } else {
-        // Insert new vote
+        // New vote — include created_by_user_id and modified_by_user_id
         const { data: inserted, error } = await supabase
           .from('caption_votes')
           .insert({
             caption_id: captionId,
             profile_id: profileId,
             vote_value: voteValue,
-            created_datetime_utc: new Date().toISOString(),
+            created_by_user_id: profileId,
+            modified_by_user_id: profileId,
           })
           .select('id')
           .single();
@@ -276,7 +268,6 @@ export default function ProtectedImages() {
           [captionId]: { voteValue, voteRowId: inserted.id },
         }));
 
-        // Update local counts
         setRows((prev) =>
           prev?.map((img) => ({
             ...img,
@@ -339,7 +330,6 @@ export default function ProtectedImages() {
     return `${days}d ago`;
   };
 
-  // Loading skeleton
   if (loading) {
     return (
       <main className="page-container">
@@ -399,7 +389,6 @@ export default function ProtectedImages() {
         </p>
       </div>
 
-      {/* Sort controls */}
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '2rem' }} className="fade-in stagger-1">
         <div className="sort-pills">
           <button
@@ -429,7 +418,6 @@ export default function ProtectedImages() {
             key={row.id}
             className={`card fade-in stagger-${Math.min(idx + 1, 6)}`}
           >
-            {/* Image */}
             {row.url && (
               <div className="card-image-wrapper">
                 <img src={row.url} alt={row.image_description || 'Humor image'} />
@@ -453,7 +441,6 @@ export default function ProtectedImages() {
             )}
 
             <div className="card-body">
-              {/* Captions */}
               {row.captions.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', fontStyle: 'italic' }}>
                   No captions yet
@@ -464,7 +451,6 @@ export default function ProtectedImages() {
                     .slice(0, expandedImage === row.id ? undefined : 3)
                     .map((caption, captionIdx) => (
                       <div key={caption.id} className="caption-card" style={{ border: 'none', padding: '0.5rem 0', background: 'transparent' }}>
-                        {/* Rank medal */}
                         <div className="caption-rank" style={{
                           color: sortMode === 'top' && captionIdx === 0 ? '#D4A843'
                             : sortMode === 'top' && captionIdx === 1 ? '#A8A8A8'
@@ -486,7 +472,6 @@ export default function ProtectedImages() {
                           </div>
                         </div>
 
-                        {/* Vote buttons */}
                         <div className="caption-votes">
                           <button
                             className={`vote-btn upvote ${userVotes[caption.id]?.voteValue === 1 ? 'active' : ''}`}
@@ -515,7 +500,6 @@ export default function ProtectedImages() {
                       </div>
                     ))}
 
-                  {/* Show more/less toggle */}
                   {row.captions.length > 3 && (
                     <button
                       className="btn btn-ghost btn-sm"
@@ -534,7 +518,6 @@ export default function ProtectedImages() {
         ))}
       </div>
 
-      {/* Stats footer */}
       <div style={{
         textAlign: 'center',
         marginTop: '4rem',
