@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '../../lib/supabaseBrowserClient';
 import Toast from '../../components/Toast';
@@ -27,6 +27,8 @@ type ImageRow = {
 
 type SortMode = 'top' | 'new' | 'controversial';
 
+const PAGE_SIZE = 200;
+
 export default function ProtectedImages() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -34,76 +36,59 @@ export default function ProtectedImages() {
   const [rows, setRows] = useState<ImageRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [userVotes, setUserVotes] = useState<Record<string, { voteValue: number; voteRowId: number }>>({});
   const [votingCaptionId, setVotingCaptionId] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('top');
   const [toast, setToast] = useState({ message: '', visible: false });
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const loadingMoreRef = useRef(false);
+  const hasMoreRef = useRef(true);
+  const profileIdRef = useRef<string | null>(null);
 
   const showToast = (message: string) => {
     setToast({ message, visible: true });
   };
 
-  useEffect(() => {
+  // Helper to fetch a page of images and enrich with vote data
+  const fetchPage = useCallback(async (pageOffset: number, currentProfileId: string) => {
     const supabase = createSupabaseBrowserClient();
 
-    async function load() {
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
+    const { data: images, error: imgError } = await supabase
+      .from('images')
+      .select(`
+        id, url, image_description, created_datetime_utc,
+        captions (
+          id, content, created_datetime_utc, profile_id,
+          profiles!captions_profile_id_fkey ( first_name, last_name )
+        )
+      `)
+      .order('created_datetime_utc', { ascending: false })
+      .range(pageOffset, pageOffset + PAGE_SIZE - 1);
 
-      if (sessionError) {
-        setError(sessionError.message);
-        setLoading(false);
-        return;
-      }
+    if (imgError) throw new Error(imgError.message);
+    if (!images || images.length === 0) return { enrichedImages: [], myVotesMap: {}, batchSize: 0 };
 
-      if (!session) {
-        router.replace('/login');
-        return;
-      }
+    const allCaptionIds = images.flatMap((img: any) =>
+      (img.captions || []).map((c: any) => c.id)
+    );
 
-      setUser(session.user);
+    let captionVoteCounts: Record<string, { upvotes: number; downvotes: number }> = {};
+    let myVotesMap: Record<string, { voteValue: number; voteRowId: number }> = {};
 
-      const currentProfileId = session.user.id;
-      setProfileId(currentProfileId);
+    if (allCaptionIds.length > 0) {
+      // Chunk the IN query — URLs over ~8KB get rejected
+      const CHUNK = 200;
 
-      const { data: images, error: imgError } = await supabase
-        .from('images')
-        .select('id, url, image_description, created_datetime_utc')
-        .order('created_datetime_utc', { ascending: false })
-        .limit(20);
+      for (let i = 0; i < allCaptionIds.length; i += CHUNK) {
+        const chunk = allCaptionIds.slice(i, i + CHUNK);
 
-      if (imgError) {
-        setError(imgError.message);
-        setLoading(false);
-        return;
-      }
-
-      if (!images || images.length === 0) {
-        setRows([]);
-        setLoading(false);
-        return;
-      }
-
-      const imageIds = images.map((img: any) => img.id);
-      const { data: captions, error: capError } = await supabase
-        .from('captions')
-        .select('id, image_id, content, created_datetime_utc, profile_id, profiles(first_name, last_name)')
-        .in('image_id', imageIds);
-
-      if (capError) {
-        console.error('Captions fetch error:', capError);
-      }
-
-      let captionVoteCounts: Record<string, { upvotes: number; downvotes: number }> = {};
-      if (captions && captions.length > 0) {
-        const captionIds = captions.map((c: any) => c.id);
         const { data: votes } = await supabase
           .from('caption_votes')
           .select('caption_id, vote_value')
-          .in('caption_id', captionIds);
+          .in('caption_id', chunk);
 
         if (votes) {
           for (const v of votes) {
@@ -119,50 +104,112 @@ export default function ProtectedImages() {
           .from('caption_votes')
           .select('id, caption_id, vote_value')
           .eq('profile_id', currentProfileId)
-          .in('caption_id', captionIds);
+          .in('caption_id', chunk);
 
         if (myVotes) {
-          const voteMap: Record<string, { voteValue: number; voteRowId: number }> = {};
           for (const v of myVotes) {
-            voteMap[v.caption_id] = { voteValue: v.vote_value, voteRowId: v.id };
+            myVotesMap[v.caption_id] = { voteValue: v.vote_value, voteRowId: v.id };
           }
-          setUserVotes(voteMap);
         }
       }
-
-      const enrichedImages = images.map((img: any) => {
-        const imgCaptions = (captions || [])
-          .filter((c: any) => c.image_id === img.id)
-          .map((c: any) => {
-            const profile = c.profiles as any;
-            const firstName = profile?.first_name || '';
-            const lastName = profile?.last_name || '';
-            const authorName = (firstName + ' ' + lastName).trim() || 'Anonymous';
-
-            return {
-              id: c.id,
-              content: c.content || '',
-              created_datetime_utc: c.created_datetime_utc,
-              author_name: authorName,
-              profile_id: c.profile_id,
-              upvotes: captionVoteCounts[c.id]?.upvotes || 0,
-              downvotes: captionVoteCounts[c.id]?.downvotes || 0,
-              net_score: (captionVoteCounts[c.id]?.upvotes || 0) - (captionVoteCounts[c.id]?.downvotes || 0),
-            };
-          });
-
-        return {
-          ...img,
-          captions: imgCaptions,
-        };
-      });
-
-      setRows(enrichedImages);
-      setLoading(false);
     }
 
-    load();
-  }, [router]);
+    const enrichedImages = images.map((img: any) => ({
+      ...img,
+      captions: (img.captions || []).map((c: any) => {
+        const profile = c.profiles as any;
+        const firstName = profile?.first_name || '';
+        const lastName = profile?.last_name || '';
+        return {
+          id: c.id,
+          content: c.content || '',
+          created_datetime_utc: c.created_datetime_utc,
+          author_name: (firstName + ' ' + lastName).trim() || 'Anonymous',
+          profile_id: c.profile_id,
+          upvotes: captionVoteCounts[c.id]?.upvotes || 0,
+          downvotes: captionVoteCounts[c.id]?.downvotes || 0,
+          net_score: (captionVoteCounts[c.id]?.upvotes || 0) - (captionVoteCounts[c.id]?.downvotes || 0),
+        };
+      }),
+    }));
+
+    return { enrichedImages, myVotesMap, batchSize: images.length };
+  }, []);
+
+  // Initial load
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
+
+    async function init() {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError) { setError(sessionError.message); setLoading(false); return; }
+      if (!session) { router.replace('/login'); return; }
+
+      setUser(session.user);
+      const currentProfileId = session.user.id;
+      setProfileId(currentProfileId);
+      profileIdRef.current = currentProfileId;
+
+      try {
+        const { enrichedImages, myVotesMap, batchSize } = await fetchPage(0, currentProfileId);
+        setRows(enrichedImages);
+        setUserVotes(myVotesMap);
+        const more = (batchSize ?? 0) >= PAGE_SIZE;
+        setHasMore(more);
+        hasMoreRef.current = more;
+        setLoading(false);
+      } catch (err: any) {
+        setError(err.message || 'Failed to load images');
+        setLoading(false);
+      }
+    }
+
+    init();
+  }, [router, fetchPage]);
+
+  // Load more handler
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMoreRef.current || !profileIdRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+
+    try {
+      const currentLength = rows?.length ?? 0;
+      const { enrichedImages, myVotesMap, batchSize } = await fetchPage(currentLength, profileIdRef.current);
+
+      setRows((prev) => [...(prev ?? []), ...enrichedImages]);
+      setUserVotes((prev) => ({ ...prev, ...myVotesMap }));
+
+      const more = (batchSize ?? 0) >= PAGE_SIZE;
+      setHasMore(more);
+      hasMoreRef.current = more;
+    } catch (err: any) {
+      console.error('Load more error:', err);
+      showToast('Failed to load more images');
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [rows, fetchPage]);
+
+  // IntersectionObserver to trigger load more when sentinel is visible
+  useEffect(() => {
+    if (!sentinelRef.current || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMoreRef.current && !loadingMoreRef.current) {
+          loadMore();
+        }
+      },
+      { rootMargin: '400px' }
+    );
+
+    observer.observe(sentinelRef.current);
+
+    return () => observer.disconnect();
+  }, [loading, loadMore]);
 
   const handleVote = useCallback(async (captionId: string, voteValue: number) => {
     if (!user || !profileId) {
@@ -176,7 +223,6 @@ export default function ProtectedImages() {
 
     try {
       if (existingVote && existingVote.voteValue === voteValue) {
-        // Remove vote (toggle off) — DELETE needs no audit fields
         const { error } = await supabase
           .from('caption_votes')
           .delete()
@@ -207,7 +253,6 @@ export default function ProtectedImages() {
 
         showToast('Vote removed');
       } else if (existingVote) {
-        // Change vote direction — include modified_by_user_id
         const { error } = await supabase
           .from('caption_votes')
           .update({
@@ -248,7 +293,6 @@ export default function ProtectedImages() {
 
         showToast(voteValue > 0 ? '👍 Upvoted!' : '👎 Downvoted');
       } else {
-        // New vote — include created_by_user_id and modified_by_user_id
         const { data: inserted, error } = await supabase
           .from('caption_votes')
           .insert({
@@ -413,7 +457,22 @@ export default function ProtectedImages() {
       </div>
 
       <div className="image-grid">
-        {rows.map((row, idx) => (
+        {[...rows].sort((a, b) => {
+          if (sortMode === 'new') {
+            return new Date(b.created_datetime_utc || 0).getTime() - new Date(a.created_datetime_utc || 0).getTime();
+          }
+          if (sortMode === 'top') {
+            const aTop = Math.max(0, ...a.captions.map(c => c.net_score));
+            const bTop = Math.max(0, ...b.captions.map(c => c.net_score));
+            return bTop - aTop;
+          }
+          if (sortMode === 'controversial') {
+            const aTotal = a.captions.reduce((sum, c) => sum + c.upvotes + c.downvotes, 0);
+            const bTotal = b.captions.reduce((sum, c) => sum + c.upvotes + c.downvotes, 0);
+            return bTotal - aTotal;
+          }
+          return 0;
+        }).map((row, idx) => (
           <div
             key={row.id}
             className={`card fade-in stagger-${Math.min(idx + 1, 6)}`}
@@ -518,15 +577,43 @@ export default function ProtectedImages() {
         ))}
       </div>
 
+      {/* Sentinel + loading indicator */}
+      <div ref={sentinelRef} style={{ minHeight: '60px', marginTop: '2rem' }}>
+        {loadingMore && (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '0.75rem',
+            padding: '2rem 1rem',
+          }}>
+            <div className="step-spinner" style={{ width: '28px', height: '28px' }} />
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+              Loading more images…
+            </p>
+          </div>
+        )}
+        {!hasMore && rows.length > 0 && (
+          <div style={{
+            textAlign: 'center',
+            padding: '2rem 1rem',
+            color: 'var(--text-muted)',
+            fontSize: '0.875rem',
+          }}>
+            🎉 You've reached the end!
+          </div>
+        )}
+      </div>
+
       <div style={{
         textAlign: 'center',
-        marginTop: '4rem',
-        padding: '2rem',
+        marginTop: '2rem',
+        padding: '1rem',
         color: 'var(--text-muted)',
         fontSize: '0.875rem',
       }} className="fade-in">
         <p>
-          {rows.length} image{rows.length !== 1 ? 's' : ''} · {rows.reduce((acc, r) => acc + r.captions.length, 0)} captions · {Object.keys(userVotes).length} of your votes cast
+          {rows.length} image{rows.length !== 1 ? 's' : ''} loaded · {rows.reduce((acc, r) => acc + r.captions.length, 0)} captions · {Object.keys(userVotes).length} of your votes cast
         </p>
       </div>
 
