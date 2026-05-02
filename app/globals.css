@@ -70,6 +70,18 @@ img { max-width: 100%; display: block; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 0.7; } }
+@keyframes shimmer-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(200, 85, 61, 0.25); }
+  50% { box-shadow: 0 0 0 8px rgba(200, 85, 61, 0); }
+}
+@keyframes dot-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+@keyframes lightbox-zoom {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
 
 .fade-in { animation: fadeIn 0.5s ease forwards; opacity: 0; }
 .stagger-1 { animation-delay: 0.05s; }
@@ -182,6 +194,36 @@ img { max-width: 100%; display: block; }
 }
 .page-subtitle { font-size: 1rem; color: var(--text-muted); max-width: 480px; margin: 0 auto; }
 
+/* ────────────────────────────────────────────────────────────
+   ONBOARDING BANNER (Assignment 10 — addresses 30–60s paralysis
+   observed across all 3 user studies)
+   ──────────────────────────────────────────────────────────── */
+.onboarding-banner {
+  max-width: 720px;
+  margin: 0 auto 2rem;
+  background: linear-gradient(135deg, var(--accent-light) 0%, #fdf6e3 100%);
+  border: 1px solid rgba(200, 85, 61, 0.18);
+  border-radius: var(--radius-xl);
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: var(--shadow-sm);
+}
+.onboarding-banner-icon { font-size: 1.75rem; flex-shrink: 0; line-height: 1; }
+.onboarding-banner-text { flex: 1; font-size: 0.9375rem; color: var(--text-primary); line-height: 1.5; }
+.onboarding-banner-text strong { color: var(--accent); font-weight: 700; }
+.onboarding-banner-text small {
+  display: block; font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.25rem;
+}
+.onboarding-banner-dismiss {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; padding: 0.25rem 0.5rem; font-size: 1.125rem;
+  line-height: 1; border-radius: var(--radius-full);
+  transition: all var(--transition); flex-shrink: 0;
+}
+.onboarding-banner-dismiss:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }
+
 /* LOGIN */
 .login-container {
   display: flex; align-items: center; justify-content: center;
@@ -207,9 +249,28 @@ img { max-width: 100%; display: block; }
   transition: box-shadow var(--transition-slow), transform var(--transition-slow);
 }
 .card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
-.card-image-wrapper { position: relative; overflow: hidden; background: var(--bg-secondary); }
+
+/* CARD IMAGE — clickable affordance for lightbox (Assignment 10 —
+   addresses universal "tapped image expecting detail view" pattern) */
+.card-image-wrapper {
+  position: relative; overflow: hidden; background: var(--bg-secondary);
+  cursor: zoom-in;
+}
 .card-image-wrapper img { width: 100%; aspect-ratio: 4/3; object-fit: cover; transition: transform 0.4s ease; }
 .card:hover .card-image-wrapper img { transform: scale(1.02); }
+
+.card-image-hint {
+  position: absolute; bottom: 0.75rem; left: 0.75rem;
+  background: rgba(26, 22, 18, 0.7);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  color: white; font-size: 0.75rem; font-weight: 600;
+  padding: 0.25rem 0.625rem; border-radius: var(--radius-full);
+  opacity: 0; transform: translateY(4px);
+  transition: all var(--transition); pointer-events: none;
+  display: flex; align-items: center; gap: 0.25rem;
+}
+.card-image-wrapper:hover .card-image-hint { opacity: 1; transform: translateY(0); }
+
 .card-body { padding: 1.25rem; }
 
 /* CAPTIONS */
@@ -221,8 +282,25 @@ img { max-width: 100%; display: block; }
 .caption-card:last-of-type { border-bottom: none; }
 .caption-rank { font-size: 1.125rem; min-width: 1.75rem; text-align: center; padding-top: 0.125rem; font-weight: 700; }
 .caption-content { flex: 1; min-width: 0; }
-.caption-text { font-size: 0.9375rem; color: var(--text-primary); line-height: 1.5; margin-bottom: 0.25rem; word-break: break-word; }
+.caption-text {
+  font-size: 0.9375rem; color: var(--text-primary); line-height: 1.5;
+  margin-bottom: 0.25rem; word-break: break-word;
+  font-weight: 500; /* Assignment 10: heavier so it pops on mobile (User 2) */
+}
 .caption-author { font-size: 0.75rem; color: var(--text-muted); font-weight: 500; }
+
+/* Assignment 10: Mobile caption distinction (User 2 — captions blended in) */
+@media (max-width: 768px) {
+  .caption-card {
+    padding: 0.625rem 0.75rem;
+    border-radius: var(--radius-md);
+    border-bottom: none;
+    margin-bottom: 0.25rem;
+    background: var(--bg-hover);
+  }
+  .caption-card:last-of-type { margin-bottom: 0; }
+  .caption-text { font-size: 1rem; font-weight: 500; }
+}
 
 /* VOTING */
 .caption-votes { display: flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
@@ -268,6 +346,43 @@ img { max-width: 100%; display: block; }
 
 /* UPLOAD PAGE */
 .upload-container { max-width: 640px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+/* FLAVOR SELECTOR (Assignment 10 — addresses Users 1 & 2's "no idea
+   what flavors do" finding by surfacing humor_flavors.description) */
+.flavor-selector { margin: 1.5rem 0 0.5rem; }
+.flavor-selector-label {
+  display: block; font-size: 0.875rem; font-weight: 600;
+  color: var(--text-primary); margin-bottom: 0.5rem;
+}
+.flavor-selector-label .label-hint {
+  font-weight: 400; color: var(--text-muted); font-size: 0.8125rem;
+}
+.flavor-options {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.5rem;
+}
+.flavor-option {
+  text-align: left; padding: 0.75rem 0.875rem;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-md); cursor: pointer;
+  transition: all var(--transition); font-family: inherit;
+}
+.flavor-option:hover { border-color: var(--accent); background: var(--bg-hover); }
+.flavor-option.selected {
+  border-color: var(--accent); background: var(--accent-subtle);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+.flavor-option-name {
+  display: block; font-size: 0.875rem; font-weight: 600;
+  color: var(--text-primary); margin-bottom: 0.125rem;
+  font-family: var(--font-mono); letter-spacing: -0.01em;
+}
+.flavor-option-desc {
+  display: -webkit-box; font-size: 0.75rem; color: var(--text-muted); line-height: 1.4;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.flavor-option.default-option .flavor-option-name { font-family: inherit; }
+.flavor-skeleton { height: 60px; border-radius: var(--radius-md); }
+
 .upload-dropzone {
   border: 2px dashed var(--border); border-radius: var(--radius-xl);
   padding: 3rem 2rem; text-align: center; cursor: pointer;
@@ -275,6 +390,7 @@ img { max-width: 100%; display: block; }
 }
 .upload-dropzone:hover, .upload-dropzone.drag-over { border-color: var(--accent); background: var(--accent-light); }
 .upload-dropzone.has-file { border-color: var(--success); background: var(--success-light); border-style: solid; }
+.upload-dropzone[aria-disabled="true"] { cursor: not-allowed; opacity: 0.7; }
 
 .upload-preview {
   margin-top: 1.5rem; border-radius: var(--radius-lg); overflow: hidden;
@@ -283,12 +399,44 @@ img { max-width: 100%; display: block; }
 }
 .upload-preview img { max-height: 300px; width: auto; max-width: 100%; object-fit: contain; }
 
+/* GENERATING BANNER (Assignment 10 — addresses universal "is it frozen?"
+   finding during 10–20s caption generation) */
+.generating-banner {
+  margin-top: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  display: flex; align-items: center; gap: 1rem;
+  animation: fadeIn 0.3s ease forwards;
+}
+.generating-banner-spinner {
+  width: 32px; height: 32px;
+  border: 3px solid var(--accent-subtle);
+  border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.generating-banner-text { flex: 1; }
+.generating-banner-title {
+  font-size: 0.9375rem; font-weight: 700; color: var(--text-primary);
+  margin-bottom: 0.125rem; display: flex; align-items: center; gap: 0.25rem;
+}
+.generating-banner-title::after {
+  content: ''; display: inline-flex;
+  width: 4px; height: 4px;
+  background: var(--accent); border-radius: 50%;
+  animation: dot-bounce 1.4s ease infinite; margin-left: 4px;
+}
+.generating-banner-subtitle { font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5; }
+
 /* Progress Steps */
-.upload-progress { margin-top: 2rem; }
-.progress-steps { display: flex; flex-direction: column; gap: 0.75rem; }
+.upload-progress { margin-top: 1rem; }
+.progress-steps { display: flex; flex-direction: column; gap: 0.5rem; }
 .progress-step {
   display: flex; align-items: center; gap: 0.75rem;
-  padding: 0.75rem 1rem; border-radius: var(--radius-md);
+  padding: 0.625rem 1rem; border-radius: var(--radius-md);
   font-size: 0.875rem; color: var(--text-muted); background: var(--bg-secondary); transition: all var(--transition);
 }
 .progress-step.active { color: var(--accent); background: var(--accent-light); font-weight: 600; }
@@ -300,6 +448,20 @@ img { max-width: 100%; display: block; }
   width: 20px; height: 20px;
   border: 2px solid var(--border); border-top-color: var(--accent);
   border-radius: 50%; animation: spin 0.6s linear infinite;
+}
+
+/* STICKY GENERATE BUTTON (Assignment 10 — addresses User 1's "Generate
+   button below the fold on 13" MacBook" finding) */
+.upload-actions { display: flex; gap: 0.75rem; justify-content: center; margin-top: 1.5rem; }
+.upload-actions-sticky {
+  position: sticky; bottom: 1rem; z-index: 50;
+  margin-top: 1.5rem; padding: 0.75rem 1rem;
+  background: rgba(250, 248, 245, 0.92);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xl); box-shadow: var(--shadow-lg);
+  display: flex; gap: 0.75rem; justify-content: center; align-items: center; flex-wrap: wrap;
+  animation: shimmer-pulse 2s ease-in-out 1;
 }
 
 /* Captions Result */
@@ -314,9 +476,25 @@ img { max-width: 100%; display: block; }
 }
 .captions-result-header h3 { font-size: 1rem; font-weight: 700; }
 .captions-result-body { padding: 0.5rem 0; }
+
+/* GENERATED CAPTIONS — quote-block styling (Assignment 10 — addresses
+   User 3's finding that captions looked like input fields) */
 .generated-caption {
-  padding: 0.875rem 1.5rem; font-size: 0.9375rem; color: var(--text-primary);
-  line-height: 1.6; border-bottom: 1px solid var(--border-light); transition: background var(--transition);
+  position: relative;
+  padding: 1rem 1.5rem 1rem 3rem;
+  font-size: 0.9375rem; color: var(--text-primary);
+  line-height: 1.6; border-bottom: 1px solid var(--border-light);
+  transition: background var(--transition);
+  font-style: italic;
+}
+.generated-caption::before {
+  content: '"';
+  position: absolute;
+  left: 1.25rem; top: 0.5rem;
+  font-size: 2rem;
+  font-family: 'Geist', serif;
+  color: var(--accent); opacity: 0.4;
+  font-style: normal; line-height: 1;
 }
 .generated-caption:last-child { border-bottom: none; }
 .generated-caption:hover { background: var(--bg-hover); }
@@ -324,8 +502,49 @@ img { max-width: 100%; display: block; }
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; background: var(--accent-subtle); color: var(--accent);
   font-size: 0.75rem; font-weight: 700; border-radius: var(--radius-full);
-  margin-right: 0.75rem; flex-shrink: 0;
+  margin-right: 0.75rem; flex-shrink: 0; font-style: normal;
 }
+
+/* LIGHTBOX MODAL (Assignment 10 — addresses universal "tap image expects
+   detail view" pattern observed across all 3 user studies) */
+.lightbox-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(26, 22, 18, 0.85);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  z-index: 1100;
+  display: flex; align-items: center; justify-content: center;
+  padding: 2rem;
+  animation: fadeIn 0.2s ease forwards;
+  cursor: zoom-out;
+}
+.lightbox-content {
+  max-width: min(90vw, 1100px); max-height: 90vh;
+  display: flex; flex-direction: column; gap: 0.75rem;
+  animation: lightbox-zoom 0.25s ease forwards;
+  cursor: default;
+}
+.lightbox-image {
+  max-width: 100%; max-height: 80vh;
+  width: auto; height: auto; object-fit: contain;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  background: var(--bg-card);
+}
+.lightbox-caption {
+  text-align: center; color: rgba(250, 248, 245, 0.9);
+  font-size: 0.875rem; padding: 0 1rem; font-style: italic;
+}
+.lightbox-close {
+  position: absolute; top: 1.25rem; right: 1.25rem;
+  background: rgba(250, 248, 245, 0.15);
+  border: 1px solid rgba(250, 248, 245, 0.25);
+  color: white; width: 40px; height: 40px;
+  border-radius: var(--radius-full); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.25rem; transition: all var(--transition);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.lightbox-close:hover { background: rgba(250, 248, 245, 0.25); transform: scale(1.05); }
 
 /* RESPONSIVE */
 @media (max-width: 768px) {
@@ -335,4 +554,8 @@ img { max-width: 100%; display: block; }
   .upload-container { padding: 1.5rem 1rem 3rem; }
   .login-card { padding: 2rem 1.5rem; }
   .sort-pills { flex-wrap: wrap; justify-content: center; }
+  .onboarding-banner { padding: 1rem 1.125rem; gap: 0.75rem; }
+  .onboarding-banner-icon { font-size: 1.5rem; }
+  .onboarding-banner-text { font-size: 0.875rem; }
+  .lightbox-backdrop { padding: 1rem; }
 }

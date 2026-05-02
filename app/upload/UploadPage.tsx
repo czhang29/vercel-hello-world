@@ -4,15 +4,21 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '../../lib/supabaseBrowserClient';
 import { runCaptionPipeline, isSupportedImageType } from '../../lib/captionApi';
-import type { PipelineProgress, PipelineResult } from '../../lib/captionApi';
+import type { PipelineProgress, PipelineResult, HumorFlavor } from '../../lib/captionApi';
 import Toast from '../../components/Toast';
 import Link from 'next/link';
-import type { User } from '@supabase/supabase-js';
+
+// Default option: lets the system pick a humor mix
+const DEFAULT_FLAVOR_OPTION: HumorFlavor = {
+  id: 0,
+  slug: 'default-mix',
+  description: "A balanced mix of styles chosen by our system. Best when you're not sure what flavor you want.",
+};
 
 export default function UploadPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -27,8 +33,14 @@ export default function UploadPage() {
   const [result, setResult] = useState<PipelineResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Assignment 10: humor flavor picker (addresses Users 1 & 2 finding —
+  // they had no idea what each flavor would produce)
+  const [flavors, setFlavors] = useState<HumorFlavor[]>([DEFAULT_FLAVOR_OPTION]);
+  const [flavorsLoading, setFlavorsLoading] = useState(true);
+  const [selectedFlavorId, setSelectedFlavorId] = useState<number>(0); // 0 = default
+
   const [toast, setToast] = useState({ message: '', visible: false });
-  const showToast = (msg: string) => setToast({ message: msg, visible: true });
+  const showToast = useCallback((msg: string) => setToast({ message: msg, visible: true }), []);
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
@@ -38,12 +50,56 @@ export default function UploadPage() {
         router.replace('/login');
         return;
       }
-      setUser(session.user);
+      setAuthReady(true);
       setAccessToken(session.access_token);
       setLoading(false);
     }
     checkAuth();
   }, [router]);
+
+  // Assignment 10: Load humor flavors from Supabase so users can pick a
+  // style and SEE what each one does before generating.
+  useEffect(() => {
+    if (!authReady) return;
+    let cancelled = false;
+    async function loadFlavors() {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data, error } = await supabase
+          .from('humor_flavors')
+          .select('id, slug, description')
+          .order('is_pinned', { ascending: false })
+          .order('id', { ascending: true });
+
+        if (cancelled) return;
+
+        if (error) {
+          console.error('Failed to load humor flavors:', error);
+          // Keep default option only — don't block upload flow
+          setFlavorsLoading(false);
+          return;
+        }
+
+        const allFlavors: HumorFlavor[] = [DEFAULT_FLAVOR_OPTION];
+        if (data) {
+          for (const f of data) {
+            allFlavors.push({
+              id: f.id,
+              slug: f.slug,
+              description: f.description,
+            });
+          }
+        }
+        setFlavors(allFlavors);
+      } catch (err) {
+        console.error('Flavors fetch error:', err);
+      } finally {
+        if (!cancelled) setFlavorsLoading(false);
+      }
+    }
+    loadFlavors();
+    return () => { cancelled = true; };
+  }, [authReady]);
 
   const handleFileSelect = useCallback((file: File) => {
     if (!isSupportedImageType(file.type)) {
@@ -59,7 +115,7 @@ export default function UploadPage() {
     setResult(null);
     setError(null);
     setPipelineSteps([]);
-  }, []);
+  }, [showToast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -80,12 +136,16 @@ export default function UploadPage() {
     setResult(null);
 
     try {
+      const flavorIdForApi = selectedFlavorId > 0 ? selectedFlavorId : null;
       const pipelineResult = await runCaptionPipeline(
         selectedFile,
         accessToken,
-        (steps) => setPipelineSteps([...steps])
+        (steps) => setPipelineSteps([...steps]),
+        flavorIdForApi
       );
       setResult(pipelineResult);
+      // Clear progress steps so they don't visually duplicate the result
+      setPipelineSteps([]);
       showToast('Captions generated successfully! 🎉');
     } catch (err: any) {
       setError(err.message || 'Pipeline failed');
@@ -114,12 +174,16 @@ export default function UploadPage() {
     );
   }
 
+  const selectedFlavor = flavors.find((f) => f.id === selectedFlavorId) ?? DEFAULT_FLAVOR_OPTION;
+  const friendlyFlavorName = (slug: string) =>
+    slug.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
   return (
     <div className="upload-container">
       <div className="page-header fade-in">
         <h1 className="page-title">📸 Upload Image</h1>
         <p className="page-subtitle">
-          Upload an image and our AI will generate hilarious captions for it.
+          Pick a humor style, drop in an image, and our AI will write hilarious captions for you.
         </p>
       </div>
 
@@ -127,9 +191,10 @@ export default function UploadPage() {
       <div
         className={`upload-dropzone fade-in stagger-1 ${dragOver ? 'drag-over' : ''} ${selectedFile ? 'has-file' : ''}`}
         onClick={() => !isProcessing && fileInputRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragOver={(e) => { e.preventDefault(); if (!isProcessing) setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
+        aria-disabled={isProcessing}
       >
         <input
           ref={fileInputRef}
@@ -166,15 +231,92 @@ export default function UploadPage() {
         )}
       </div>
 
-      {/* Action buttons */}
+      {/* Assignment 10: Humor Flavor Selector — addresses User 1 & 2's
+          finding that flavor names told them nothing. Each flavor's
+          description (from humor_flavors.description) is now visible. */}
       {selectedFile && !isProcessing && !result && (
-        <div className="fade-in" style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1.5rem' }}>
-          <button className="btn btn-primary" onClick={handleUploadAndCaption} style={{ padding: '0.75rem 2rem', fontSize: '0.9375rem' }}>
+        <div className="flavor-selector fade-in">
+          <label className="flavor-selector-label">
+            🎨 Pick a humor style
+            <span className="label-hint"> · what kind of caption should the AI write?</span>
+          </label>
+
+          {flavorsLoading ? (
+            <div className="flavor-options">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="skeleton flavor-skeleton" />
+              ))}
+            </div>
+          ) : (
+            <div className="flavor-options" role="radiogroup" aria-label="Humor flavor">
+              {flavors.map((f) => {
+                const isSelected = selectedFlavorId === f.id;
+                const isDefault = f.id === 0;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={isSelected}
+                    className={`flavor-option ${isSelected ? 'selected' : ''} ${isDefault ? 'default-option' : ''}`}
+                    onClick={() => setSelectedFlavorId(f.id)}
+                  >
+                    <span className="flavor-option-name">
+                      {isDefault ? '✨ Default mix' : friendlyFlavorName(f.slug)}
+                    </span>
+                    {f.description && (
+                      <span className="flavor-option-desc">{f.description}</span>
+                    )}
+                    {!f.description && !isDefault && (
+                      <span className="flavor-option-desc" style={{ fontStyle: 'italic' }}>
+                        {f.slug} style
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Assignment 10: STICKY action bar — addresses User 1's finding that
+          on a 13" MacBook the Generate button got pushed below the fold */}
+      {selectedFile && !isProcessing && !result && (
+        <div className="upload-actions-sticky fade-in">
+          <button
+            className="btn btn-primary"
+            onClick={handleUploadAndCaption}
+            style={{ padding: '0.75rem 2rem', fontSize: '0.9375rem' }}
+          >
             🚀 Generate Captions
+            {selectedFlavorId > 0 && (
+              <span style={{ fontWeight: 400, opacity: 0.85, fontSize: '0.8125rem' }}>
+                · {friendlyFlavorName(selectedFlavor.slug)}
+              </span>
+            )}
           </button>
           <button className="btn btn-ghost" onClick={handleReset}>
             Clear
           </button>
+        </div>
+      )}
+
+      {/* Assignment 10: Prominent generating banner — addresses universal
+          "is it frozen?" finding during 10–20s caption generation */}
+      {isProcessing && (
+        <div className="generating-banner">
+          <div className="generating-banner-spinner" aria-hidden="true" />
+          <div className="generating-banner-text">
+            <div className="generating-banner-title">Working on your captions</div>
+            <div className="generating-banner-subtitle">
+              This usually takes 10–20 seconds. The AI is uploading your image and writing
+              {selectedFlavorId > 0
+                ? ` "${friendlyFlavorName(selectedFlavor.slug)}" style captions`
+                : ' a few caption options'}.
+              Please don&apos;t close this page.
+            </div>
+          </div>
         </div>
       )}
 
@@ -217,6 +359,16 @@ export default function UploadPage() {
           <div className="captions-result-header">
             <span style={{ fontSize: '1.25rem' }}>🎉</span>
             <h3>Generated Captions</h3>
+            {selectedFlavorId > 0 && (
+              <span style={{
+                fontSize: '0.75rem',
+                color: 'var(--text-muted)',
+                marginLeft: 'auto',
+                fontFamily: 'var(--font-mono)',
+              }}>
+                {selectedFlavor.slug}
+              </span>
+            )}
           </div>
           <div className="captions-result-body">
             {result.captions.length > 0 ? (

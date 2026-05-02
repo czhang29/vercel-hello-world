@@ -27,20 +27,30 @@ export type PipelineResult = {
   cdnUrl: string;
 };
 
+export type HumorFlavor = {
+  id: number;
+  slug: string;
+  description: string | null;
+};
+
 /**
  * Runs the full 4-step caption pipeline.
  * Calls onProgress at each step so the UI can update.
+ *
+ * Assignment 10: Now accepts an optional humorFlavorId so users can pick
+ * a humor style. Existing callers that pass only 3 args still work.
  */
 export async function runCaptionPipeline(
   file: File,
   accessToken: string,
-  onProgress: (steps: PipelineProgress[]) => void
+  onProgress: (steps: PipelineProgress[]) => void,
+  humorFlavorId?: number | null
 ): Promise<PipelineResult> {
   const steps: PipelineProgress[] = [
-    { step: 1, status: 'pending', message: 'Generating upload URL...' },
-    { step: 2, status: 'pending', message: 'Uploading image...' },
-    { step: 3, status: 'pending', message: 'Registering image...' },
-    { step: 4, status: 'pending', message: 'Generating captions...' },
+    { step: 1, status: 'pending', message: 'Generating upload URL…' },
+    { step: 2, status: 'pending', message: 'Uploading image…' },
+    { step: 3, status: 'pending', message: 'Registering image…' },
+    { step: 4, status: 'pending', message: 'Generating captions…' },
   ];
 
   const updateStep = (idx: number, status: PipelineProgress['status'], message?: string) => {
@@ -101,12 +111,15 @@ export async function runCaptionPipeline(
     const { imageId } = await registerRes.json();
     updateStep(2, 'completed', 'Image registered');
 
-    // Step 4: Generate captions
-    updateStep(3, 'active', 'Generating captions (this may take a moment)...');
+    // Step 4: Generate captions (optionally for a specific humor flavor)
+    updateStep(3, 'active', 'Generating captions (this can take 10–20 seconds)…');
+    const captionBody: { imageId: string; humorFlavorId?: number } = { imageId };
+    if (humorFlavorId) captionBody.humorFlavorId = humorFlavorId;
+
     const captionRes = await fetch(`${API_BASE}/pipeline/generate-captions`, {
       method: 'POST',
       headers: authHeaders,
-      body: JSON.stringify({ imageId }),
+      body: JSON.stringify(captionBody),
     });
 
     if (!captionRes.ok) {

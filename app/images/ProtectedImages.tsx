@@ -27,7 +27,13 @@ type ImageRow = {
 
 type SortMode = 'top' | 'new' | 'controversial';
 
+type LightboxImage = {
+  url: string;
+  description?: string | null;
+};
+
 const PAGE_SIZE = 200;
+const ONBOARDING_DISMISS_KEY = 'caption-this-onboarding-dismissed';
 
 export default function ProtectedImages() {
   const router = useRouter();
@@ -43,6 +49,14 @@ export default function ProtectedImages() {
   const [votingCaptionId, setVotingCaptionId] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('top');
   const [toast, setToast] = useState({ message: '', visible: false });
+
+  // Assignment 10: onboarding banner (addresses 30–60s paralysis)
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  // Assignment 10: lightbox state (addresses universal "tap image expects
+  // detail view" pattern observed in all 3 user studies)
+  const [lightbox, setLightbox] = useState<LightboxImage | null>(null);
+
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingMoreRef = useRef(false);
   const hasMoreRef = useRef(true);
@@ -51,6 +65,40 @@ export default function ProtectedImages() {
   const showToast = (message: string) => {
     setToast({ message, visible: true });
   };
+
+  // Read onboarding dismissal from localStorage on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const dismissed = window.localStorage.getItem(ONBOARDING_DISMISS_KEY);
+      if (!dismissed) setShowOnboarding(true);
+    } catch {
+      setShowOnboarding(true);
+    }
+  }, []);
+
+  const dismissOnboarding = () => {
+    setShowOnboarding(false);
+    try {
+      window.localStorage.setItem(ONBOARDING_DISMISS_KEY, '1');
+    } catch {
+      // ignore — will just show again next visit
+    }
+  };
+
+  // Close lightbox on Escape + lock body scroll while open
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightbox(null);
+    };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [lightbox]);
 
   // Helper to fetch a page of images and enrich with vote data
   const fetchPage = useCallback(async (pageOffset: number, currentProfileId: string) => {
@@ -75,8 +123,8 @@ export default function ProtectedImages() {
       (img.captions || []).map((c: any) => c.id)
     );
 
-    let captionVoteCounts: Record<string, { upvotes: number; downvotes: number }> = {};
-    let myVotesMap: Record<string, { voteValue: number; voteRowId: number }> = {};
+    const captionVoteCounts: Record<string, { upvotes: number; downvotes: number }> = {};
+    const myVotesMap: Record<string, { voteValue: number; voteRowId: number }> = {};
 
     if (allCaptionIds.length > 0) {
       // Chunk the IN query — URLs over ~8KB get rejected
@@ -193,7 +241,7 @@ export default function ProtectedImages() {
     }
   }, [rows, fetchPage]);
 
-  // IntersectionObserver to trigger load more when sentinel is visible
+  // IntersectionObserver to trigger load more
   useEffect(() => {
     if (!sentinelRef.current || loading) return;
 
@@ -212,8 +260,11 @@ export default function ProtectedImages() {
   }, [loading, loadMore]);
 
   const handleVote = useCallback(async (captionId: string, voteValue: number) => {
+    // Assignment 10: explicit toast before redirect (User 1 finding —
+    // votes failed silently when not logged in)
     if (!user || !profileId) {
-      router.push('/login');
+      showToast('Sign in to vote on captions');
+      setTimeout(() => router.push('/login'), 600);
       return;
     }
 
@@ -223,6 +274,7 @@ export default function ProtectedImages() {
 
     try {
       if (existingVote && existingVote.voteValue === voteValue) {
+        // Toggle off (remove vote)
         const { error } = await supabase
           .from('caption_votes')
           .delete()
@@ -251,8 +303,9 @@ export default function ProtectedImages() {
           })) ?? null
         );
 
-        showToast('Vote removed');
+        showToast('Vote removed — tap again to re-vote');
       } else if (existingVote) {
+        // Switch vote direction
         const { error } = await supabase
           .from('caption_votes')
           .update({
@@ -291,8 +344,9 @@ export default function ProtectedImages() {
           })) ?? null
         );
 
-        showToast(voteValue > 0 ? '👍 Upvoted!' : '👎 Downvoted');
+        showToast(voteValue > 0 ? 'Switched to 👍' : 'Switched to 👎');
       } else {
+        // First-time vote
         const { data: inserted, error } = await supabase
           .from('caption_votes')
           .insert({
@@ -327,7 +381,8 @@ export default function ProtectedImages() {
           })) ?? null
         );
 
-        showToast(voteValue > 0 ? '👍 Upvoted!' : '👎 Downvoted');
+        // Assignment 10: tell users they can tap again to undo (User 2 finding)
+        showToast(voteValue > 0 ? '👍 Upvoted! Tap again to undo' : '👎 Downvoted — tap again to undo');
       }
     } catch (err: any) {
       console.error('Vote error:', err);
@@ -433,6 +488,25 @@ export default function ProtectedImages() {
         </p>
       </div>
 
+      {/* Assignment 10: onboarding banner — addresses 30–60s paralysis */}
+      {showOnboarding && (
+        <div className="onboarding-banner fade-in" role="region" aria-label="How to use Caption Gallery">
+          <div className="onboarding-banner-icon" aria-hidden="true">👋</div>
+          <div className="onboarding-banner-text">
+            <strong>New here?</strong> Vote 👍 or 👎 on the captions below to rank them.
+            <small>Tap any image to see it full-size · Tap a vote button again to undo it.</small>
+          </div>
+          <button
+            className="onboarding-banner-dismiss"
+            onClick={dismissOnboarding}
+            aria-label="Dismiss"
+            title="Got it"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '2rem' }} className="fade-in stagger-1">
         <div className="sort-pills">
           <button
@@ -478,7 +552,19 @@ export default function ProtectedImages() {
             className={`card fade-in stagger-${Math.min(idx + 1, 6)}`}
           >
             {row.url && (
-              <div className="card-image-wrapper">
+              <div
+                className="card-image-wrapper"
+                onClick={() => row.url && setLightbox({ url: row.url, description: row.image_description })}
+                role="button"
+                tabIndex={0}
+                aria-label="View image full size"
+                onKeyDown={(e) => {
+                  if ((e.key === 'Enter' || e.key === ' ') && row.url) {
+                    e.preventDefault();
+                    setLightbox({ url: row.url, description: row.image_description });
+                  }
+                }}
+              >
                 <img src={row.url} alt={row.image_description || 'Humor image'} />
                 {row.captions.length > 0 && (
                   <div style={{
@@ -496,6 +582,9 @@ export default function ProtectedImages() {
                     {row.captions.length} caption{row.captions.length !== 1 ? 's' : ''}
                   </div>
                 )}
+                <div className="card-image-hint" aria-hidden="true">
+                  🔍 <span>Tap to expand</span>
+                </div>
               </div>
             )}
 
@@ -508,56 +597,65 @@ export default function ProtectedImages() {
                 <div className="captions-list">
                   {sortCaptions(row.captions)
                     .slice(0, expandedImage === row.id ? undefined : 3)
-                    .map((caption, captionIdx) => (
-                      <div key={caption.id} className="caption-card" style={{ border: 'none', padding: '0.5rem 0', background: 'transparent' }}>
-                        <div className="caption-rank" style={{
-                          color: sortMode === 'top' && captionIdx === 0 ? '#D4A843'
-                            : sortMode === 'top' && captionIdx === 1 ? '#A8A8A8'
-                              : sortMode === 'top' && captionIdx === 2 ? '#CD7F32'
-                                : 'var(--text-muted)',
-                        }}>
-                          {sortMode === 'top' && captionIdx < 3
-                            ? ['🥇', '🥈', '🥉'][captionIdx]
-                            : `#${captionIdx + 1}`}
-                        </div>
-
-                        <div className="caption-content">
-                          <p className="caption-text">{caption.content}</p>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                            <span className="caption-author">{caption.author_name}</span>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                              {formatTimeAgo(caption.created_datetime_utc)}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="caption-votes">
-                          <button
-                            className={`vote-btn upvote ${userVotes[caption.id]?.voteValue === 1 ? 'active' : ''}`}
-                            onClick={() => handleVote(caption.id, 1)}
-                            disabled={votingCaptionId === caption.id}
-                            title="Upvote"
-                          >
-                            <span className="vote-icon">👍</span>
-                            <span>{caption.upvotes}</span>
-                          </button>
-
-                          <div className={`vote-score ${getScoreClass(caption.net_score)}`}>
-                            {caption.net_score > 0 ? '+' : ''}{caption.net_score}
+                    .map((caption, captionIdx) => {
+                      const myVote = userVotes[caption.id];
+                      const upActive = myVote?.voteValue === 1;
+                      const downActive = myVote?.voteValue === -1;
+                      return (
+                        <div key={caption.id} className="caption-card" style={{ border: 'none', padding: '0.5rem 0', background: 'transparent' }}>
+                          <div className="caption-rank" style={{
+                            color: sortMode === 'top' && captionIdx === 0 ? '#D4A843'
+                              : sortMode === 'top' && captionIdx === 1 ? '#A8A8A8'
+                                : sortMode === 'top' && captionIdx === 2 ? '#CD7F32'
+                                  : 'var(--text-muted)',
+                          }}>
+                            {sortMode === 'top' && captionIdx < 3
+                              ? ['🥇', '🥈', '🥉'][captionIdx]
+                              : `#${captionIdx + 1}`}
                           </div>
 
-                          <button
-                            className={`vote-btn downvote ${userVotes[caption.id]?.voteValue === -1 ? 'active' : ''}`}
-                            onClick={() => handleVote(caption.id, -1)}
-                            disabled={votingCaptionId === caption.id}
-                            title="Downvote"
-                          >
-                            <span className="vote-icon">👎</span>
-                            <span>{caption.downvotes}</span>
-                          </button>
+                          <div className="caption-content">
+                            <p className="caption-text">{caption.content}</p>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                              <span className="caption-author">{caption.author_name}</span>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                {formatTimeAgo(caption.created_datetime_utc)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="caption-votes">
+                            <button
+                              className={`vote-btn upvote ${upActive ? 'active' : ''}`}
+                              onClick={() => handleVote(caption.id, 1)}
+                              disabled={votingCaptionId === caption.id}
+                              title={upActive ? 'You upvoted this — click to undo' : 'Upvote'}
+                              aria-label={upActive ? 'Remove upvote' : 'Upvote'}
+                              aria-pressed={upActive}
+                            >
+                              <span className="vote-icon">👍</span>
+                              <span>{caption.upvotes}</span>
+                            </button>
+
+                            <div className={`vote-score ${getScoreClass(caption.net_score)}`}>
+                              {caption.net_score > 0 ? '+' : ''}{caption.net_score}
+                            </div>
+
+                            <button
+                              className={`vote-btn downvote ${downActive ? 'active' : ''}`}
+                              onClick={() => handleVote(caption.id, -1)}
+                              disabled={votingCaptionId === caption.id}
+                              title={downActive ? 'You downvoted this — click to undo' : 'Downvote'}
+                              aria-label={downActive ? 'Remove downvote' : 'Downvote'}
+                              aria-pressed={downActive}
+                            >
+                              <span className="vote-icon">👎</span>
+                              <span>{caption.downvotes}</span>
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                   {row.captions.length > 3 && (
                     <button
@@ -600,7 +698,7 @@ export default function ProtectedImages() {
             color: 'var(--text-muted)',
             fontSize: '0.875rem',
           }}>
-            🎉 You've reached the end!
+            🎉 You&apos;ve reached the end!
           </div>
         )}
       </div>
@@ -616,6 +714,33 @@ export default function ProtectedImages() {
           {rows.length} image{rows.length !== 1 ? 's' : ''} loaded · {rows.reduce((acc, r) => acc + r.captions.length, 0)} captions · {Object.keys(userVotes).length} of your votes cast
         </p>
       </div>
+
+      {/* Assignment 10: Lightbox modal — addresses universal pattern of all
+          3 users tapping the image expecting a detail view */}
+      {lightbox && (
+        <div
+          className="lightbox-backdrop"
+          onClick={() => setLightbox(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image preview"
+        >
+          <button
+            className="lightbox-close"
+            onClick={(e) => { e.stopPropagation(); setLightbox(null); }}
+            aria-label="Close preview"
+            title="Close (Esc)"
+          >
+            ✕
+          </button>
+          <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
+            <img src={lightbox.url} alt={lightbox.description || 'Expanded image'} className="lightbox-image" />
+            {lightbox.description && (
+              <p className="lightbox-caption">{lightbox.description}</p>
+            )}
+          </div>
+        </div>
+      )}
 
       <Toast
         message={toast.message}
